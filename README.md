@@ -1,152 +1,256 @@
-\# Parcial 1 - Servicios Telemáticos
+# Parcial 1 – Servicios Telemáticos   
+## DNS Maestro/Esclavo con BIND9 + Apache con Compresión + Exposición con ngrok  
+  
+**Estudiante:** Mauriel Rodríguez Ospina   
+**Entorno:** Windows (host) + VirtualBox + Vagrant   
+**VMs:** Ubuntu (`ubuntu/jammy64`)   
+  
+---  
+  
+# 🎯 Objetivo del Parcial  
+  
+Implementar un laboratorio completo que incluya:  
+  
+1. Servidor DNS autoritativo maestro/esclavo con:  
+ - Zona directa  
+ - Zona inversa  
+ - Transferencia de zona (AXFR)  
+ - NOTIFY automático  
+ - Medidas de seguridad (sin recursión pública)  
+  
+2. Servidor Apache con:  
+ - VirtualHost personalizado  
+ - Compresión gzip usando mod_deflate  
+ - Exclusiones de archivos ya comprimidos  
+ - Validación mediante curl, navegador y Wireshark  
+  
+3. Exposición del servidor web a Internet usando ngrok.  
+  
+---  
+  
+# 🖥️ 1. Topología del Laboratorio  
+  
+Se crearon dos máquinas virtuales usando Vagrant:  
+  
+## 🔹 VM1 – maestro.empresa.local  
+- IP: 192.168.56.10  
+- Rol:  
+ - DNS Maestro (BIND9)  
+ - Servidor Web (Apache)  
+  
+## 🔹 VM2 – esclavo.empresa.local  
+- IP: 192.168.56.11  
+- Rol:  
+ - DNS Esclavo  
+ - Cliente para pruebas (dig y curl)  
+  
+Red privada utilizada: 192.168.56.0/24  
+  
+---  
+  
+# 🌐 2. Configuración del DNS con BIND9  
+  
+## Instalación  
+  
+En ambas máquinas:  
 
-\*\*Estudiante:\*\* Mauriel Rodriguez Ospina  
+sudo apt update  
+sudo apt install -y bind9 bind9utils dnsutils
 
-\*\*Repositorio:\*\* Parcial1\_Telematicos  
+  
+---  
+  
+## Seguridad aplicada  
+  
+Se configuró el servidor DNS como autoritativo, evitando que funcione como open resolver:  
+  
+- `recursion no;`  
+- `allow-recursion { none; };`  
+- `allow-query { localhost; 192.168.56.0/24; };`  
+  
+Esto evita que el servidor resuelva dominios externos.  
+  
+---  
+  
+## Zonas configuradas en el Maestro  
+  
+1. empresa.local (zona directa)  
+2. 56.168.192.in-addr.arpa (zona inversa)  
+3. mauriel.com (para el servidor web)  
+  
+Se aplicó:  
+  
+- allow-transfer solo al esclavo (192.168.56.11)  
+- notify yes;  
+- also-notify 192.168.56.11;  
+  
+---  
+  
+## Registros creados  
+  
+### Zona directa empresa.local  
+  
+- maestro → 192.168.56.10  
+- esclavo → 192.168.56.11  
+- www → maestro  
+- Registro AAAA configurado  
+  
+Validación:  
 
+sudo named-checkzone empresa.local /etc/bind/db.empresa.local
 
+  
+---  
+  
+### Zona inversa  
+  
+- 10 → maestro.empresa.local  
+- 11 → esclavo.empresa.local  
+  
+Validación:  
 
-En este parcial se trabajó con dos máquinas virtuales en VirtualBox creadas con Vagrant, una como servidor \*\*DNS maestro\*\* y otra como \*\*DNS esclavo\*\*. Sobre estas mismas máquinas también se configuró Apache con compresión y finalmente se expuso el servidor web usando ngrok.
+sudo named-checkzone 56.168.192.in-addr.arpa /etc/bind/db.192.168.56
 
+  
+---  
+  
+## Configuración del Esclavo  
+  
+Las zonas se declararon como:  
 
+type slave;  
+masters { 192.168.56.10; };
 
+  
+Se verificó que los archivos de zona fueran transferidos correctamente.  
+  
+---  
+  
+# 🔍 3. Verificación del DNS  
+  
+Se realizaron pruebas con:  
+
+dig @192.168.56.11 maestro.empresa.local  
+dig @192.168.56.11 -x 192.168.56.10  
+dig @192.168.56.11 google.com
+
+  
+Resultados:  
+  
+- Resolución directa correcta.  
+- Resolución inversa correcta.  
+- No resuelve dominios externos (seguridad activa).  
+  
+También se detuvo el maestro para comprobar que el esclavo siguiera respondiendo correctamente.  
+  
+---  
+  
+# 🌎 4. Configuración de Apache  
+  
+## Instalación  
+
+sudo apt install -y apache2  
+sudo systemctl enable --now apache2
+
+  
+---  
+  
+## VirtualHost Personalizado  
+  
+Se creó el dominio:  
+
+parcial.mauriel.com
+
+  
+Archivo:  
+
+/etc/apache2/sites-available/parcial-mauriel.conf
+
+  
+Se activó con:  
+
+sudo a2ensite parcial-mauriel.conf  
+sudo a2dissite 000-default.conf  
+sudo systemctl reload apache2
+
+  
+Verificación:  
+
+apache2ctl -S
+
+  
+El VirtualHost activo es:  
+
+*:80 parcial.mauriel.com
+
+  
+---  
+  
+# 📦 5. Compresión gzip con mod_deflate  
+  
+Se activaron los módulos:  
+
+sudo a2enmod deflate  
+sudo a2enmod headers  
+sudo systemctl restart apache2
+
+  
+Se configuró compresión para:  
+  
+- text/html  
+- text/css  
+- application/javascript  
+- application/json  
+  
+Se excluyeron imágenes y archivos multimedia ya comprimidos.  
+  
+---  
+  
+## Verificación de compresión  
+  
+Sin gzip:  
+
+curl -I [http://parcial.mauriel.com](http://parcial.mauriel.com)
+
+  
+Con gzip:  
+
+curl -I -H "Accept-Encoding: gzip" [http://parcial.mauriel.com](http://parcial.mauriel.com)
+
+  
+Se verificó la presencia de:  
+
+Content-Encoding: gzip
+
+  
+También se validó en:  
+  
+- DevTools del navegador  
+- Wireshark (captura HTTP)  
+  
+---  
+  
+# 🌍 6. Exposición con ngrok  
+  
+Desde Windows:  
+
+ngrok http 192.168.56.10:80
+
+  
+Se generó una URL pública HTTPS que permitió acceder al servidor desde fuera de la red local.  
+  
+Se comprobó mostrando una página personalizada.  
+  
+---  
+  
+# 📁 Archivos incluidos  
+  
+- Vagrantfile  
+- Archivos de configuración DNS  
+- Archivos de zona  
+- Configuración de Apache  
+- Configuración de compresión  
+- Página HTML de prueba  
+- README con documentación  
+  
 ---
-
-
-
-\## 1. Entorno de trabajo
-
-
-
-\- Sistema base: Windows
-
-\- Virtualización: VirtualBox
-
-\- Aprovisionamiento: Vagrant
-
-\- Máquinas:
-
-&nbsp; - \*\*Maestro:\*\* 192.168.56.10
-
-&nbsp; - \*\*Esclavo:\*\* 192.168.56.11
-
-
-
-Las dos máquinas se levantaron desde un Vagrantfile y se validó conectividad entre ellas para poder hacer las transferencias de zona.
-
-
-
----
-
-
-
-\## 2. Parte 1 - DNS Maestro/Esclavo con transferencia de zona e inversa
-
-
-
-Se instaló y configuró \*\*BIND9\*\* en ambas máquinas.
-
-
-
-En el \*\*maestro\*\* se creó la zona directa `empresa.local` con registros:
-
-\- A (para maestro y esclavo)
-
-\- CNAME (www apuntando al maestro)
-
-\- AAAA
-
-
-
-También se configuró la zona inversa para resolver IP → nombre usando PTR.
-
-
-
-En el \*\*esclavo\*\* se configuraron las mismas zonas como tipo \*slave\* para que se descargaran automáticamente desde el maestro. La transferencia se dejó restringida para que solo el esclavo pudiera transferir (por IP), y se habilitó NOTIFY para que el esclavo se actualice cuando haya cambios.
-
-
-
-Adicionalmente se deshabilitó la recursión para que el DNS no funcione como resolver público.
-
-
-
-\### Pruebas realizadas
-
-\- Resolución directa (A)
-
-\- Alias (CNAME)
-
-\- IPv6 (AAAA)
-
-\- Resolución inversa (PTR)
-
-\- Prueba de seguridad: intento de resolver un dominio externo (no debe resolver por recursión deshabilitada)
-
-\- Tolerancia a fallos: se detuvo el DNS maestro y se verificó que el esclavo siguiera resolviendo.
-
-
-
----
-
-
-
-\## 3. Parte 2 - Configuración y evaluación de compresión en Apache
-
-
-
-Se instaló \*\*Apache2\*\* en el servidor maestro (192.168.56.10) y se configuró compresión usando `mod\_deflate`.
-
-
-
-Se creó el dominio \*\*parcial.mauriel.com\*\* en el DNS local (zona `mauriel.com`) apuntando al servidor web. Esta zona también se replicó al esclavo por transferencia.
-
-
-
-Para validar la compresión:
-
-\- Se usó `curl` enviando el header `Accept-Encoding: gzip` y se verificó que el servidor respondiera con `Content-Encoding: gzip`.
-
-\- También se validó en el navegador con DevTools (Network) y en Wireshark capturando el tráfico HTTP.
-
-
-
-En las pruebas se observó reducción del tamaño de la respuesta cuando se aplica gzip.
-
-
-
----
-
-
-
-\## 4. Parte 3 - Exponer el servidor local a Internet usando ngrok
-
-
-
-Se ejecutó \*\*ngrok\*\* desde el equipo host (Windows) creando un túnel HTTP hacia el servidor Apache del maestro:
-
-
-
-\- Se generó una URL pública HTTPS.
-
-\- Se verificó que desde esa URL se podía ver el contenido del servidor.
-
-\- Se dejó una página HTML personalizada para evidenciar que el sitio expuesto correspondía al servidor configurado.
-
-
-
----
-
-
-
-\## Evidencias / Archivos del repositorio
-
-
-
-En este repositorio se encuentra:
-
-\- El `Vagrantfile` usado para levantar las máquinas
-
-\- Archivos de apoyo del parcial (si aplica)
-
-\- Este README con la descripción del trabajo realizado
-
