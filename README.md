@@ -1,152 +1,282 @@
-\# Parcial 1 - Servicios Telemáticos
+# Parcial 1 – DNS Maestro/Esclavo con BIND9 + Apache con Compresión
 
-\*\*Estudiante:\*\* Mauriel Rodriguez Ospina  
+**Realizado por:** Mauriel Rodríguez Ospina  
+**Entorno:** Windows (host) + VirtualBox + Vagrant  
+**VMs:** Ubuntu (Vagrant box `ubuntu/jammy64`)  
 
-\*\*Repositorio:\*\* Parcial1\_Telematicos  
+---
+
+## 🎯 Objetivo del Parcial
+
+1. Implementar un servidor DNS autoritativo maestro/esclavo usando BIND9, incluyendo:
+   - Zona directa
+   - Zona inversa
+   - Transferencia de zona (AXFR) segura
+   - NOTIFY automático
+   - Medidas de seguridad (sin recursión pública)
+
+2. Configurar un servidor Apache con compresión gzip usando mod_deflate, aplicar exclusiones y verificar su funcionamiento.
+
+3. Exponer el servidor web mediante ngrok y validar acceso externo.
+
+---
+
+# 1️⃣ Topología del laboratorio
+
+Se crearon dos máquinas virtuales usando Vagrant:
+
+### 🔹 VM1 – maestro.empresa.local
+- IP: 192.168.56.10
+- Rol:
+  - DNS Maestro (BIND9)
+  - Servidor Web (Apache)
+
+### 🔹 VM2 – esclavo.empresa.local
+- IP: 192.168.56.11
+- Rol:
+  - DNS Esclavo (BIND9)
+  - Cliente para pruebas (dig y curl)
+
+Red privada: 192.168.56.0/24
+
+---
+
+# 2️⃣ Creación de las máquinas con Vagrant
+
+Desde la carpeta del proyecto:
+
+vagrant up
 
 
+Acceso por SSH:
 
-En este parcial se trabajó con dos máquinas virtuales en VirtualBox creadas con Vagrant, una como servidor \*\*DNS maestro\*\* y otra como \*\*DNS esclavo\*\*. Sobre estas mismas máquinas también se configuró Apache con compresión y finalmente se expuso el servidor web usando ngrok.
 
+-vagrant ssh maestro
+-vagrant ssh esclavo
 
 
 ---
 
+# 3️⃣ Configuración DNS con BIND9
+
+## 🔹 Instalación en ambas máquinas
 
 
-\## 1. Entorno de trabajo
+sudo apt update
+sudo apt install -y bind9 bind9utils dnsutils
 
 
-
-\- Sistema base: Windows
-
-\- Virtualización: VirtualBox
-
-\- Aprovisionamiento: Vagrant
-
-\- Máquinas:
-
-&nbsp; - \*\*Maestro:\*\* 192.168.56.10
-
-&nbsp; - \*\*Esclavo:\*\* 192.168.56.11
+Verificación:
 
 
-
-Las dos máquinas se levantaron desde un Vagrantfile y se validó conectividad entre ellas para poder hacer las transferencias de zona.
-
+sudo systemctl status bind9
 
 
 ---
 
+## 🔹 Seguridad aplicada
+
+En ambas VMs se configuró BIND como autoritativo:
+
+- `recursion no;`
+- `allow-recursion { none; };`
+- `allow-query { localhost; 192.168.56.0/24; };`
+
+Esto evita que el servidor funcione como open resolver.
+
+---
+
+## 🔹 Zonas configuradas en el Maestro
+
+1. empresa.local (zona directa)
+2. 56.168.192.in-addr.arpa (zona inversa)
+3. mauriel.com (para Apache)
+
+Se aplicó:
+
+- allow-transfer solo al esclavo (192.168.56.11)
+- notify yes;
+- also-notify al esclavo
+
+---
+
+## 🔹 Registros creados
+
+### Zona directa empresa.local
+
+- A:
+  - maestro → 192.168.56.10
+  - esclavo → 192.168.56.11
+- CNAME:
+  - www → maestro
+- AAAA configurado
+
+Validación:
 
 
-\## 2. Parte 1 - DNS Maestro/Esclavo con transferencia de zona e inversa
-
-
-
-Se instaló y configuró \*\*BIND9\*\* en ambas máquinas.
-
-
-
-En el \*\*maestro\*\* se creó la zona directa `empresa.local` con registros:
-
-\- A (para maestro y esclavo)
-
-\- CNAME (www apuntando al maestro)
-
-\- AAAA
-
-
-
-También se configuró la zona inversa para resolver IP → nombre usando PTR.
-
-
-
-En el \*\*esclavo\*\* se configuraron las mismas zonas como tipo \*slave\* para que se descargaran automáticamente desde el maestro. La transferencia se dejó restringida para que solo el esclavo pudiera transferir (por IP), y se habilitó NOTIFY para que el esclavo se actualice cuando haya cambios.
-
-
-
-Adicionalmente se deshabilitó la recursión para que el DNS no funcione como resolver público.
-
-
-
-\### Pruebas realizadas
-
-\- Resolución directa (A)
-
-\- Alias (CNAME)
-
-\- IPv6 (AAAA)
-
-\- Resolución inversa (PTR)
-
-\- Prueba de seguridad: intento de resolver un dominio externo (no debe resolver por recursión deshabilitada)
-
-\- Tolerancia a fallos: se detuvo el DNS maestro y se verificó que el esclavo siguiera resolviendo.
-
+sudo named-checkzone empresa.local /etc/bind/db.empresa.local
 
 
 ---
 
+### Zona inversa
+
+- 10 → maestro.empresa.local
+- 11 → esclavo.empresa.local
+
+Validación:
 
 
-\## 3. Parte 2 - Configuración y evaluación de compresión en Apache
-
-
-
-Se instaló \*\*Apache2\*\* en el servidor maestro (192.168.56.10) y se configuró compresión usando `mod\_deflate`.
-
-
-
-Se creó el dominio \*\*parcial.mauriel.com\*\* en el DNS local (zona `mauriel.com`) apuntando al servidor web. Esta zona también se replicó al esclavo por transferencia.
-
-
-
-Para validar la compresión:
-
-\- Se usó `curl` enviando el header `Accept-Encoding: gzip` y se verificó que el servidor respondiera con `Content-Encoding: gzip`.
-
-\- También se validó en el navegador con DevTools (Network) y en Wireshark capturando el tráfico HTTP.
-
-
-
-En las pruebas se observó reducción del tamaño de la respuesta cuando se aplica gzip.
-
+sudo named-checkzone 56.168.192.in-addr.arpa /etc/bind/db.192.168.56
 
 
 ---
 
+## 🔹 Configuración del Esclavo
+
+Se declararon las zonas como:
 
 
-\## 4. Parte 3 - Exponer el servidor local a Internet usando ngrok
+type slave;
+masters { 192.168.56.10; };
 
 
-
-Se ejecutó \*\*ngrok\*\* desde el equipo host (Windows) creando un túnel HTTP hacia el servidor Apache del maestro:
-
+Se verificó que los archivos fueran descargados correctamente en:
 
 
-\- Se generó una URL pública HTTPS.
-
-\- Se verificó que desde esa URL se podía ver el contenido del servidor.
-
-\- Se dejó una página HTML personalizada para evidenciar que el sitio expuesto correspondía al servidor configurado.
-
+/var/cache/bind/
 
 
 ---
 
+# 4️⃣ Verificación DNS
+
+Desde el esclavo:
+
+Resolución directa:
 
 
-\## Evidencias / Archivos del repositorio
+dig @192.168.56.11 maestro.empresa.local
 
 
+Resolución inversa:
 
-En este repositorio se encuentra:
 
-\- El `Vagrantfile` usado para levantar las máquinas
+dig @192.168.56.11 -x 192.168.56.10
 
-\- Archivos de apoyo del parcial (si aplica)
 
-\- Este README con la descripción del trabajo realizado
+Prueba de seguridad:
 
+
+dig @192.168.56.11 google.com
+
+
+No debe resolver dominios externos.
+
+Prueba de alta disponibilidad:
+Se detuvo el servicio bind9 en el maestro y el esclavo continuó respondiendo correctamente.
+
+---
+
+# 5️⃣ Configuración de Apache
+
+Instalación en el maestro:
+
+
+sudo apt install -y apache2
+sudo systemctl enable --now apache2
+
+
+---
+
+## 🔹 VirtualHost
+
+Se configuró el dominio:
+
+
+parcial.mauriel.com
+
+
+Apuntando a:
+
+
+192.168.56.10
+
+
+Se creó el archivo de configuración en:
+
+
+/etc/apache2/sites-available/parcial-mauriel.conf
+
+
+---
+
+# 6️⃣ Compresión gzip con mod_deflate
+
+Activación:
+
+
+sudo a2enmod deflate
+sudo a2enmod headers
+sudo systemctl restart apache2
+
+
+Se configuró compresión para:
+
+- text/html
+- text/css
+- application/javascript
+- application/json
+
+Se excluyeron:
+
+- .jpg
+- .png
+- .gif
+- .mp4
+- .pdf
+
+Verificación:
+
+
+curl -I -H "Accept-Encoding: gzip" http://parcial.mauriel.com
+
+
+Debe aparecer:
+
+
+Content-Encoding: gzip
+
+
+Se comprobó también con navegador (DevTools) y Wireshark.
+
+---
+
+# 7️⃣ Exposición del servidor con ngrok
+
+Desde Windows:
+
+
+ngrok http 192.168.56.10:80
+
+
+Se generó una URL pública HTTPS que permitió acceder al servidor desde fuera de la red local.
+
+Se validó mostrando una página personalizada.
+
+---
+
+# 📁 Archivos incluidos en este repositorio
+
+- Vagrantfile
+- Archivos de configuración DNS
+- Archivos de configuración Apache
+- Archivos de zona
+- Archivo HTML de prueba
+- README con documentación del proceso
+
+---
+
+# ✅ Conclusión
+
+Se implementó correctamente una arquitectura DNS maestro/esclavo segura, se configuró un servi
